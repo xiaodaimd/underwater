@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*~
+
+# Datasets and generated conditions
+/data/
+/datasets/
+/conditions/
+
+# Model weights and checkpoints
+/weights/
+/checkpoints/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.npy
+*.npz
+
+# Training / inference outputs
+/outputs/
+/runs/
+/experiments/
+/deployment/
+/logs/
+*.log
+events.jsonl
+tensorboard/
+runs/
+
+# Temporary files
+*.tmp
+*.bak
+*.orig
+*.rej
