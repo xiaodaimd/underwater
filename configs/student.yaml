@@ -1,0 +1,54 @@
+# 单步 Adapter Student：5 轮预热 + 55 轮双层搜索 + 40 轮固定 Top-3 微调。
+# 搜索与微调脚本共用本配置，断点中的 config_sha256 才能保持一致。
+output_dir: outputs/student_adapter
+
+data:
+  train_manifest: configs/data/uieb_train600.csv
+  inner_manifest: configs/data/inner480_seed3407.csv
+  dev_manifest: configs/data/dev120_seed3407.csv
+  data_root: data
+  image_size: [336, 336]
+
+teacher:
+  denoiser_path: outputs/teacher_e3/weights/model_denoiser_10000.pth
+  denoiser_sha256: bfd800528e4666aa7792b44f75fbbfa500e3fecf3ab47d0d591c6fce5c35f9a5
+  # 与 E3 冻结 Beta 内容一致；这里使用 400k 原始权重文件。
+  beta_predictor_path: outputs/teacher_400k/weights/model_beta_predictor_400000.pth
+  beta_predictor_sha256: 7155ce29fc6dc97fa6fdbf8e7b484d171c827a4279e93bca0769c34c50299047
+  beta_use_norm: true
+  condition_mode: dynamic_physical
+
+model:
+  adapter_reduction: 4
+  candidate_sites: [enc1, enc2, enc3, enc4, mid, dec4, dec3, dec2, dec1]
+
+training:
+  seed: 3407
+  batch_size: 4
+  outer_every_inner: 4
+  lambda_kd: 0.5
+  fp32: true
+  warmup_epochs: 5
+  warmup:
+    adapter_lr: 1.0e-04
+    adapter_weight_decay: 1.0e-04
+    gate_fixed_value: 0.5
+  search_epochs: 55
+  bilevel:
+    adapter_lr: 1.0e-04
+    adapter_weight_decay: 1.0e-04
+    gate_lr: 3.0e-04
+    gate_weight_decay: 1.0e-03
+    grad_clip: 1.0
+    epsilon: 1.0e-08
+    unrolled_steps: 1
+    hypergradient: bilalora_eq7
+  top_k: 3
+  finetune_epochs: 40
+  finetune:
+    adapter_lr: 5.0e-05
+    adapter_weight_decay: 1.0e-04
+    gate_lr: 0.0
+    teacher_steps: 2
+    student_steps: 1
+    report_epoch: 100

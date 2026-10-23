@@ -1,0 +1,38 @@
+# SeaDiff 400k 教师训练配置（UIEB 600 对）
+seed: 3407
+output_dir: outputs/teacher_400k
+
+data:
+  manifest: configs/data/uieb_train600.csv
+  # 清单内路径均相对于 data_root；可用 --data-root 覆盖。
+  data_root: data
+  image_size: [336, 336]
+  batch_size: 5
+
+model:
+  channels: 32
+  ch_mults: [1, 2, 3, 4]
+  n_blocks: 1
+  beta_norm: true
+  # 由 scripts/make_teacher_init.py 生成；SHA 用于确认同一起点。
+  init_checkpoint: weights/shared_init/teacher_beta_norm_seed3407.pt
+  init_checkpoint_sha256: f6c228b944a548edaf98a7194e294d767d99f9a068242f4572b83699e0dc00ec
+
+# 400k 教师推理默认权重（训练完成后生成）。
+inference:
+  condition_mode: paper
+  denoiser: outputs/teacher_400k/weights/model_denoiser_400000.pth
+  denoiser_sha256: b0d885edb338d920966bf05cc0e308dcaf5c316cb18023353360746bccae8b91
+  beta_predictor: outputs/teacher_400k/weights/model_beta_predictor_400000.pth
+  beta_predictor_sha256: 7155ce29fc6dc97fa6fdbf8e7b484d171c827a4279e93bca0769c34c50299047
+
+training:
+  iterations: 400000
+  lr: 0.0001
+  betas: [0.9, 0.999]
+  eps: 1.0e-08
+  weight_decay: 0.0001
+  perceptual_weight: 0.1
+  input_order: paper_u_h_j
+  log_every: 50
+  save_every: 50000

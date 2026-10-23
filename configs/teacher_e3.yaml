@@ -1,0 +1,42 @@
+# E3 动态物理教师微调：冻结 beta，只训练 denoiser。
+seed: 3407
+output_dir: outputs/teacher_e3
+
+condition:
+  mode: dynamic_physical
+
+data:
+  manifest: configs/data/uieb_train600.csv
+  data_root: data
+  image_size: [336, 336]
+  batch_size: 5
+
+model:
+  channels: 32
+  ch_mults: [1, 2, 3, 4]
+  n_blocks: 1
+  beta_norm: true
+  # 400k 教师的最终权重；SHA 必须与训练记录一致。
+  denoiser_init: outputs/teacher_400k/weights/model_denoiser_400000.pth
+  denoiser_init_sha256: b0d885edb338d920966bf05cc0e308dcaf5c316cb18023353360746bccae8b91
+  beta_init: outputs/teacher_400k/weights/model_beta_predictor_400000.pth
+  beta_init_sha256: 7155ce29fc6dc97fa6fdbf8e7b484d171c827a4279e93bca0769c34c50299047
+
+# E3 教师推理默认权重（微调完成后生成）。
+inference:
+  condition_mode: dynamic_physical
+  denoiser: outputs/teacher_e3/weights/model_denoiser_10000.pth
+  denoiser_sha256: bfd800528e4666aa7792b44f75fbbfa500e3fecf3ab47d0d591c6fce5c35f9a5
+  beta_predictor: outputs/teacher_e3/weights/model_beta_frozen_10000.pth
+  beta_predictor_sha256: 61c8bc6ba0b65e8b58ed0f0bb99ddd65e6acb9267794ff01c24c121871ca9c33
+
+training:
+  iterations: 10000
+  lr: 1.0e-05
+  betas: [0.9, 0.999]
+  eps: 1.0e-08
+  weight_decay: 1.0e-04
+  perceptual_weight: 0.1
+  input_order: paper_u_h_j
+  log_every: 50
+  save_every: 2000
