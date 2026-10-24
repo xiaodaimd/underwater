@@ -46,6 +46,8 @@ class SiteGates(nn.Module):
 
     def forward(self) -> Tensor:
         """返回可微门控，保留外层优化需要的计算图。"""
+        # 每个位置仅一个全局标量，不随图像、像素或时间步变化；
+        # E3 随 t 变化的物理插值 w(t) 在 teacher/conditions.py 中独立计算。
         return torch.sigmoid(self.logits)
 
     @torch.no_grad()

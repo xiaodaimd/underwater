@@ -48,6 +48,8 @@ def build_dynamic_physical_pack_fn(
         time_batch: Tensor,
     ) -> Tensor:
         underwater, histogram, physical = conditions
+        # physical 是本 batch 预先算好的 J；回调按当前链时间步重新构造 J_t。
+        # 重建的是条件插值，教师链每一跳的噪声状态则由 DDIM 更新。
         return make_dynamic_physical_packed(
             state,
             time_batch,
@@ -152,6 +154,7 @@ class TeacherChainRunner:
             predicted_x0 = self.denoise_fn(packed, time_batch)
             forwards += 1
 
+            # 模型直接预测 x0，再由当前状态反推出 epsilon；eta=0 不另加随机噪声。
             next_timestep = chain[index + 1]
             predicted_noise = (
                 state - sqrt_alpha[timestep] * predicted_x0
@@ -164,6 +167,8 @@ class TeacherChainRunner:
         end = chain[-1]
         terminal = end == 0
         if terminal:
+            # 到达离散 t=0 后还会再前向一次，返回这次 x0 预测，而非刚到达的状态。
+            # 因此终端链前向数为 len(chain)，内部链为 len(chain)-1。
             time_batch = torch.full(
                 (batch,), 0, dtype=torch.long, device=device
             )
@@ -191,12 +196,16 @@ class TeacherChainRunner:
 
         alpha_t = sqrt_alpha[start]
         sigma_t = sqrt_one_minus[start]
+        # alpha/sigma 指 sqrt(alpha_bar) / sqrt(1-alpha_bar)，不是 beta 调度值。
+        # 即使 end=0，也沿用离散调度第0项；此处没有改成理想清洁端点 (1,0)。
+        # 这与 run_chain 的终端额外 x0 前向共同定义当前代码的目标边界约定。
         alpha_s = sqrt_alpha[end]
         sigma_s = sqrt_one_minus[end]
 
         ratio = sigma_s / sigma_t
         denominator = alpha_s - ratio * alpha_t
 
+        # 相近时间步会使反解分母很小；按噪声比设相对下界，避免放大数值误差。
         minimum = denominator.abs()
         floor = MIN_DENOMINATOR_REL * ratio
         if not torch.isfinite(minimum) or not (minimum >= floor).item():
@@ -240,6 +249,7 @@ class DistillationTargetProvider:
                 (self.student_grid[0], 0),
             )
         else:
+            # N点网格有N-1个相邻训练区间；数字N不是本次样本的时间步t。
             self._intervals = tuple(
                 zip(self.student_grid[:-1], self.student_grid[1:])
             )
@@ -274,6 +284,7 @@ class DistillationTargetProvider:
         device = underwater.device
 
         if interval_indices is None:
+            # 每张图独立选区间，所以同一 batch 可含不同 t；训练并非始终 t=999。
             interval_indices = torch.randint(
                 len(self._intervals),
                 (batch,),
@@ -286,6 +297,7 @@ class DistillationTargetProvider:
 
         outcomes: List[ChainOutcome] = []
         total_forwards = 0
+        # 噪声生成器重新以同一批索引初始化；区间抽样未推进这个新生成器的状态。
         generator = self._make_generator(batch_index, device)
 
         for row in range(batch):
@@ -299,6 +311,7 @@ class DistillationTargetProvider:
                 device=device,
                 dtype=sample_ref.dtype,
             )
+            # 训练状态包含 GT 的前向加噪项；部署使用纯初始噪声，不需要 reference。
             x_t = (
                 sqrt_alpha[start] * sample_ref
                 + sqrt_one_minus[start] * noise
@@ -322,6 +335,7 @@ class DistillationTargetProvider:
                 start=start,
                 end=end,
             )
+            # 返回的教师状态/反解目标都作为常量；梯度仅经过之后的学生前向。
             outcomes.append(
                 ChainOutcome(
                     start=start,
@@ -380,6 +394,7 @@ class DistillationTargetProvider:
             if device is not None
             else torch.Generator()
         )
+        # 仅由配置seed与调用方批索引决定，独立于全局RNG；相同索引会重放同一随机流。
         generator.manual_seed(
             self.seed ^ (int(batch_index) * 0x9E3779B9) & 0xFFFFFFFF
         )

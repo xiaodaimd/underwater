@@ -58,6 +58,8 @@ def compute_physical_image(
     if (depth < 0.0).any().item() or (depth > 1.0).any().item():
         raise ValueError("depth 必须在 [0,1] 范围内。")
 
+    # 条件全部来自 U 及其深度，不读取清晰参考图，也不依赖扩散时间 t。
+    # Beta 输出为每图、每颜色通道一个系数 [B,3,1,1]，随后广播到空间维。
     batch = underwater.shape[0]
     predicted_beta = beta_predictor(underwater)
 
@@ -86,6 +88,7 @@ def compute_physical_image(
     )
     ambient_light = ambient_light_from_input(underwater)
 
+    # 这里 beta 是水体衰减系数，与扩散过程的线性 beta_t 日程无关。
     attenuation = torch.exp(-predicted_beta * depth_rgb)
     transmission = attenuation.clamp(0.0, 1.0)
     scattering = (1.0 - attenuation).clamp(0.0, 1.0)
@@ -94,6 +97,8 @@ def compute_physical_image(
     preclamp = (
         underwater - scattering * ambient_light
     ) / transmission
+    # clamp 外区域的梯度会被截断，preclamp 返回值用于监测此类像素比例。
+    # 原始 400k 联合训练保留 J→Beta 的梯度；E3 调用方用 no_grad 冻结此路径。
     physical_image = preclamp.clamp(0.0, 1.0)
 
     if not torch.isfinite(physical_image).all().item():

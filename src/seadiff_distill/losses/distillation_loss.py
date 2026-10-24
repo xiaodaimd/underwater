@@ -50,7 +50,10 @@ class DistillationLoss(nn.Module):
                 "student_pred/reference/teacher_target 形状必须一致。"
             )
 
+        # original 对齐真实配对 GT；distill 对齐阶段教师反解的 x0 目标。
+        # 两项在这里使用同一个学生预测，具体时间步/状态由训练器构造。
         original, parts = self.base_loss(student_pred, reference)
+        # 即使调用方忘记 detach，也不允许 KD 反传进入阶段教师目标。
         distill = F.mse_loss(
             student_pred, teacher_target.detach(), reduction="mean"
         )

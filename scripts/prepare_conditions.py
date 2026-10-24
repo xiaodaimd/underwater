@@ -132,6 +132,8 @@ def main() -> int:
                 )
             rgb = image.convert("RGB")
 
+        # 深度和直方图都只读取水下图 U，清晰 reference 不参与条件生成。
+        # 先在原深度分辨率逐图归一化，再缩放，训练读取时不重复 min-max。
         raw_depth = depth_model.infer(np.array(rgb))
         depth01 = depth_model.minmax_float01(raw_depth)
         depth = F.interpolate(
@@ -160,6 +162,7 @@ def main() -> int:
         if abs(float(histogram.sum()) - 1.0) > 1e-4:
             raise RuntimeError(f"直方图总和不为 1：{input_path}")
 
+        # 缓存形状分别为 [H,W] 和 [3,H,W]；Dataset 再给深度补单通道维。
         atomic_save_npy(depth, depth_path)
         atomic_save_npy(histogram, histogram_path)
         written += 1

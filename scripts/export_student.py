@@ -62,6 +62,8 @@ def main() -> int:
 
     student.requires_grad_(False)
     student.eval()
+    # 保留显式 gate 乘法，避免将 gate 乘入升维权重后产生浮点运算顺序差异。
+    # 此文件不打包 E3 骨干/Beta/深度模型，推理端还需相应外部权重和条件。
     student.save_deployment(
         deployment,
         absorb_gates=False,
@@ -78,6 +80,7 @@ def main() -> int:
         deployment, teacher.denoiser, device="cpu"
     )
     generator = torch.Generator(device="cpu").manual_seed(3407)
+    # 合成 12 通道输入只验证结构导出等价性，不代表图像质量评估或完整数据测试。
     probe = torch.randn(2, 12, 64, 64, generator=generator)
     timesteps = torch.full((2,), 999, dtype=torch.long)
     with torch.no_grad():

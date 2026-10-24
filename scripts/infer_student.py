@@ -81,6 +81,7 @@ def main() -> int:
         beta_use_norm=bool(teacher_cfg.get("beta_use_norm", True)),
     )
 
+    # 部署包只含选中的 Adapter/固定门控；两种加载方式都依赖外部 E3 骨干。
     if args.deployment:
         student = load_deployment_student(
             args.deployment, teacher.denoiser, device="cpu"
@@ -118,12 +119,14 @@ def main() -> int:
         depth = sample["depth"].unsqueeze(0).to(device)
         histogram = sample["histogram"].unsqueeze(0).to(device)
 
+        # 推理条件只由 U 及其缓存生成；reference 仅在后面的可选指标分支读取。
         with torch.no_grad():
             _, physical = compute_physical_image(
                 underwater=underwater,
                 depth=depth,
                 beta_predictor=teacher.beta_predictor,
             )
+            # 部署从纯噪声出发；区别于蒸馏训练中由 GT 加噪构造的 x_t。
             initial = derive_initial_noise(
                 sample_id,
                 global_seed=args.seed,
@@ -146,6 +149,8 @@ def main() -> int:
                 histogram_slot,
                 physical_slot,
             )
+            # 未传 timesteps 时模型使用固定 t=999；没有教师链或阶段循环。
+            # “一次前向”计数针对 U-Net，前面仍要执行 Beta 和物理条件计算。
             prediction = student(packed)
 
         save_prediction(

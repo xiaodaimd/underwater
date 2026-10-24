@@ -104,6 +104,7 @@ def main() -> int:
         histogram = sample["histogram"].unsqueeze(0).to(device)
 
         with torch.no_grad():
+            # 静态 J 每图计算一次；后续回调只随 t 改变 U/J 的插值。
             _, physical = compute_physical_image(
                 underwater=underwater,
                 depth=depth,
@@ -128,6 +129,7 @@ def main() -> int:
                     alpha_bar=alpha_bar,
                 )
 
+                # 回调在采样器的每次前向前调用，不能把首次 J_999 贯穿整条链。
                 def condition_fn(timestep, _conditions):
                     step = torch.full(
                         (1,), timestep, dtype=torch.long, device=device
@@ -152,6 +154,7 @@ def main() -> int:
                             "E3 dynamic_physical per-step J_t"
                         ),
                     ).to(device)
+                    # DDIM eta=0：给定初始噪声后不再逐步抽样噪声。
                     generator = None
                 else:
                     sampler = ConditionAwareDDPMTeacherSampler(
@@ -161,6 +164,7 @@ def main() -> int:
                             "E3 dynamic_physical per-step J_t"
                         ),
                     ).to(device)
+                    # DDPM t>0 每步另加噪声；固定初始状态不等于固定整条随机轨迹。
                     generator = torch.Generator(device=device)
                     generator.manual_seed(
                         derive_noise_seed(sample_id, args.seed)
@@ -188,6 +192,7 @@ def main() -> int:
                 histogram_slot,
                 physical_slot,
             )
+            # --steps 只控制 DDIM；本脚本的 DDPM 固定跑完整 1000 步。
             if generator is None:
                 prediction = sampler(packed)
             else:

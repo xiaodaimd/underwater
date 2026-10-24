@@ -45,6 +45,8 @@ class VGG19PerceptualLoss(nn.Module):
         model = vgg19(weights=VGG19_Weights.IMAGENET1K_V1).features[:16]
         self._validate_structure(model)
         model = model.to(device).eval()
+        # 冻结 VGG 参数仍保留对 prediction 的梯度；因此不能把感知前向
+        # 整体放进 no_grad，否则学生/去噪器收不到感知项监督。
         for parameter in model.parameters():
             parameter.requires_grad = False
         self.vgg_layers = model
@@ -84,6 +86,9 @@ class VGG19PerceptualLoss(nn.Module):
             raise ValueError(
                 f"感知损失输入形状不一致：{tuple(prediction.shape)} vs {tuple(target.shape)}"
             )
+        # 无 ImageNet mean/std、无内部 clamp；GT 通常本身不要求梯度。
+        # 每个特征层先求自己的 mean MSE，再对三个标量等权平均，
+        # 并非把不同空间大小的特征拼接后统一求平均。
         prediction_features = self.output_features(prediction)
         target_features = self.output_features(target)
         losses = [

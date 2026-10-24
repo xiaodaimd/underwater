@@ -26,6 +26,7 @@ training:
   seed: 3407
   batch_size: 4
   outer_every_inner: 4
+  # 内/外层均用 GT 重建损失 + lambda_kd * 教师反解目标 MSE。
   lambda_kd: 0.5
   fp32: true
   warmup_epochs: 5
@@ -41,8 +42,11 @@ training:
     gate_weight_decay: 1.0e-03
     grad_clip: 1.0
     epsilon: 1.0e-08
+    # 兼容性配置项；实际 hypergradient=bilalora_eq7 使用一阶梯度投影近似，
+    # 不构造可微优化器展开，也不计算 Hessian。实现见 student/hypergradients.py。
     unrolled_steps: 1
     hypergradient: bilalora_eq7
+  # 第60轮仅按当前门控排序，结果写 selection_details.json，不在配置中预设位置。
   top_k: 3
   finetune_epochs: 40
   finetune:

@@ -118,6 +118,8 @@ def load_seadiff_teacher(
     teacher.denoiser.load_state_dict(denoiser_state, strict=True)
     teacher.beta_predictor.load_state_dict(beta_state, strict=True)
 
+    # 这是“作为教师使用”的冻结加载入口；400k 联合训练/E3 微调训练器
+    # 会按各自训练范围设置参数梯度，不能由此推断所有教师训练均冻结。
     teacher.requires_grad_(False)
     teacher.zero_grad(set_to_none=True)
     teacher.eval()

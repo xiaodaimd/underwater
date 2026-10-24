@@ -26,6 +26,7 @@ def psnr(prediction: Tensor, reference: Tensor, *, data_range: float = 1.0) -> f
         raise ValueError(
             f"PSNR 输入形状不一致：{tuple(prediction.shape)} vs {tuple(reference.shape)}"
         )
+    # 网络前向为 FP32；此处仅把指标中的平方误差累计提高到 FP64 精度。
     prediction = clamp01(prediction).double()
     reference = clamp01(reference).double()
     mse = torch.mean((prediction - reference) ** 2).item()

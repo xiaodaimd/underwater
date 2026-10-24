@@ -223,6 +223,7 @@ class BilevelOptimizer:
 
             _require_finite(inner.values(), "内层训练输入")
 
+            # 第一次内层前向用于损失记录和门控超梯度；此时还未更新任何参数。
             inner_before = self.loss_module(
                 self.student(
                     inner["inner_packed_input"],
@@ -278,6 +279,8 @@ class BilevelOptimizer:
 
                 _require_finite(outer.values(), "外层训练输入")
 
+                # 外层数据来自dev划分，但同样含GT原始损失和KD项；不是仅算GT L1。
+                # 与inner_before保持同一参数点，才能比较两份梯度的投影。
                 outer_before = self.loss_module(
                     self.student(
                         outer["outer_packed_input"],
@@ -291,6 +294,7 @@ class BilevelOptimizer:
                     outer_before["loss_total"].detach().item()
                 )
 
+                # 调用式(7)秩一近似；没有展开可微AdamW虚拟更新。
                 gate_gradients, diagnostics = (
                     compute_bilalora_hypergradient(
                         inner_before["loss_total"],
@@ -315,6 +319,9 @@ class BilevelOptimizer:
                 logs.update(diagnostics)
                 self.student.zero_grad(set_to_none=True)
 
+            # 门控可能刚被更新，需重新构图再求Adapter梯度；目标与噪声仍复用本批常量。
+            # 当前实现即使update_gates=False也重算内层，因此搜索每批有两次内层前向，
+            # 门控更新批还多一次外层前向；“部署单步”不等于训练每批仅一次前向。
             inner_after_gate = self.loss_module(
                 self.student(
                     inner["inner_packed_input"],
@@ -346,6 +353,7 @@ class BilevelOptimizer:
             self.adapter_optimizer.step()
             _require_finite(self.weights, "更新后的 Adapter")
 
+            # 记录的是更新门控之后、更新Adapter之前的损失，不是完整step后的新损失。
             logs["inner_loss_total_after_gate"] = float(
                 inner_after_gate["loss_total"].detach().item()
             )

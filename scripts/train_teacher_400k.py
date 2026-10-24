@@ -33,6 +33,7 @@ def main() -> int:
     seed = int(config.get("seed", 3407))
     determinism = configure_determinism(seed, strict=True)
 
+    # 原始教师联合训练 Denoiser 和 Beta；可微 J 路径把重建损失传到 Beta。
     trainer = TeacherTrainer(config, device)
     save_config_snapshot(config, trainer.output_dir / "config.json")
     summary = trainer.train(

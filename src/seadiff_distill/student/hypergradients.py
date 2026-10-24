@@ -120,6 +120,8 @@ def compute_bilalora_hypergradient(
 
     # 严格要求计算图连通。
     # 初始零梯度合法；未连接的参数会直接报错。
+    # create_graph=False且后面detach：这里实现梯度投影近似，不对优化器步骤求导。
+    # 配置中的unrolled_steps标签不表示本函数进行了可微内层展开或Hessian反传。
     inner_gradients = torch.autograd.grad(
         inner_loss,
         parameters,
@@ -179,6 +181,7 @@ def compute_bilalora_hypergradient(
         raise FloatingPointError("梯度投影计算出现溢出。")
 
     # 内层梯度为零时，分子也为零，c 自然等于零。
+    # FP64仅用于小量投影与消减；最终门控梯度转换回参数精度，系数不再求导。
     coefficient = (
         gradient_dot / (norm_squared + epsilon)
     ).detach()

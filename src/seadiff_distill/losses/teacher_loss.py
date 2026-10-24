@@ -44,6 +44,8 @@ class TeacherLoss(nn.Module):
                 "prediction/target 形状不一致："
                 f"{tuple(prediction.shape)} vs {tuple(target.shape)}"
             )
+        # mean 归约覆盖 batch、通道和空间维；输入是未经 clamp 的 x0 预测。
+        # 同一重建损失也供学生的 GT 监督使用，不表示此处会调用教师网络。
         mse = F.mse_loss(prediction, target)
         perceptual = self.perceptual(prediction, target)
         loss = mse + self.perceptual_weight * perceptual

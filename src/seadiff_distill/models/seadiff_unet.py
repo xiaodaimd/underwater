@@ -34,6 +34,8 @@ class TimeEmbedding(nn.Module):
         self.lin2 = nn.Linear(self.n_channels, self.n_channels)
 
     def forward(self, t: torch.Tensor):
+        # t 为逐样本整数 [B]；默认 n_channels=128，先得到 [B,32]
+        # 正弦/余弦编码，再经两层线性映射为 [B,128]。
         # Create sinusoidal position embeddings
         # [same as those from the transformer](../../transformers/positional_encoding.html)
         #
@@ -132,6 +134,7 @@ class ResidualBlock(nn.Module):
         h = self.conv1(self.act1(x))
         # Add time embeddings
         if self.is_noise:
+            # [B,C] 时间特征扩成 [B,C,1,1]，对整张特征图广播相加。
             h += self.time_emb(self.time_act(t))[:, :, None, None]
         # Second convolution layer
         if self.use_norm:
@@ -142,6 +145,8 @@ class ResidualBlock(nn.Module):
         return h + self.shortcut(x)
 
 
+# 沿用上游类名与说明，但当前 DownBlock/UpBlock 实际仅包含残差块，
+# 没有 AttentionBlock；动态先验插值也不发生在这些模块内部。
 class DownBlock(nn.Module):
     """
     ### Down block
@@ -226,6 +231,8 @@ class MiddleBlock(nn.Module):
             is_noise=is_noise,
             use_norm=use_norm,
         )
+        # 四个空洞卷积按顺序串联，膨胀率 2/4/8/16，保持空间尺寸；
+        # 这里没有并行分支拼接，也没有注意力模块。
         self.dia1 = nn.Conv2d(
             n_channels, n_channels, 3, 1, dilation=2, padding=get_pad(16, 3, 1, 2)
         )
@@ -355,6 +362,7 @@ class Denoise_UNet(nn.Module):
         self.down = nn.ModuleList(down)
 
         # Middle block
+        # 瓶颈在本实现中显式关闭时间注入；编码/解码残差块仍可接收 t。
         self.middle = MiddleBlock(out_channels, n_channels * 4, is_noise=False)
 
         # #### Second half of U-Net - increasing resolution
@@ -400,6 +408,8 @@ class Denoise_UNet(nn.Module):
             t = self.time_emb(t)
         else:
             t = None
+        # 默认 12→32 通道；H/W 依次下降为 1/2、1/4、1/8 后恢复。
+        # 拼接顺序在 data/packing.py 约定，当前网络只接收通道张量。
         # Get image projection
         x = self.image_proj(x)
 
@@ -425,6 +435,8 @@ class Denoise_UNet(nn.Module):
                 #
                 x = m(x, t)
 
+        # 当前此处只有 Swish+卷积；输出为 [B,3,H,W] 的 x0 预测，
+        # 无 Sigmoid 或 clamp，也不在本网络内执行 DDPM/DDIM 状态更新。
         # Final normalization and convolution
         return self.final(self.act(x))
 
@@ -497,6 +509,8 @@ class Beta_UNet(nn.Module):
             x = m(x, t)
             h.append(x)
         x = self.middle(x, t)
+        # 全局平均池化把每图空间特征压成通道向量，最后输出 RGB 衰减系数。
+        # squeeze 会在 B=1 时去掉 batch 维，data/physical.py 调用方负责补回。
         logits = self.transform(self.pool(x).squeeze())
         if self.use_norm:
             # 数值稳定性补充：前向夹紧 logits 到 ±8（beta 严格在 (0,1) 内），
@@ -519,6 +533,7 @@ class DocDiff(nn.Module):
     ):
         super(DocDiff, self).__init__()
         self.beta_use_norm = bool(beta_use_norm)
+        # Beta 只读水下图 U，不读扩散 t 或当前状态 x_t；与日程 beta_t 无关。
         self.beta_predictor = Beta_UNet(
             3,
             3,
@@ -527,6 +542,7 @@ class DocDiff(nn.Module):
             n_blocks,
             use_norm=self.beta_use_norm,
         )
+        # 保留上游构造签名，但实际通道在这里固定为 Beta 3→3、Denoiser 12→3。
         self.denoiser = Denoise_UNet(
             12, 3, n_channels, ch_mults, n_blocks, is_noise=True
         )

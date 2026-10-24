@@ -63,6 +63,8 @@ class DDIMTeacherSampler(nn.Module):
 
         self.denoiser = denoiser
         self.sampling_steps = sampling_steps
+        # 在原 1000 步训练日程上取递减子网格，端点仍为 999 与 0。
+        # sampling_steps 是网络前向次数，不是重新训练一个更短的噪声日程。
         timesteps = tuple(
             round(index * 999 / (sampling_steps - 1))
             for index in reversed(range(sampling_steps))
@@ -114,6 +116,8 @@ class DDIMTeacherSampler(nn.Module):
         _validate_packed(packed_input, self.sqrt_alpha_bar.device)
         self.denoiser.eval()
 
+        # 仅前三通道是可变 x_t，后九通道 [U,H,J] 在本静态采样器中保持不变。
+        # E3 的动态 J_t 必须使用 condition_samplers.py 中的条件感知子类。
         state = packed_input[:, :3]
         conditions = packed_input[:, 3:]
         batch = packed_input.shape[0]
@@ -128,10 +132,12 @@ class DDIMTeacherSampler(nn.Module):
             )
             self._check_prediction(predicted_x0, state)
 
+            # eta=0：给定相同初始噪声和条件后轨迹确定，末次直接返回 x0_hat。
             if index == len(timesteps) - 1:
                 return predicted_x0
 
             next_timestep = timesteps[index + 1]
+            # x0 预测参数化：先由 x_t 与 x0_hat 反推出当前 epsilon_hat。
             predicted_noise = (
                 state - self.sqrt_alpha_bar[timestep] * predicted_x0
             ) / self.sqrt_one_minus_alpha_bar[timestep]
@@ -172,6 +178,7 @@ class DDPMTeacherSampler(nn.Module):
         alpha_bar_prev = torch.nn.functional.pad(
             alpha_bar, (1, 0), value=1.0
         )[:TRAIN_TIMESTEPS]
+        # posterior_var 保留为日程信息；下方采样实际遵循上游约定使用 beta_t。
         posterior_var = betas * (1.0 - alpha_bar_prev) / (1.0 - alpha_bar)
 
         self.register_buffer("betas", betas)
@@ -225,6 +232,8 @@ class DDPMTeacherSampler(nn.Module):
         _validate_packed(packed_input, self.gammas.device)
         self.denoiser.eval()
 
+        # 仅前三通道是可变 x_t，后九通道 [U,H,J] 在本静态采样器中保持不变。
+        # E3 的动态 J_t 必须使用 condition_samplers.py 中的条件感知子类。
         state = packed_input[:, :3]
         conditions = packed_input[:, 3:]
         batch = packed_input.shape[0]
@@ -243,6 +252,7 @@ class DDPMTeacherSampler(nn.Module):
             ):
                 raise RuntimeError("教师输出形状/设备/精度异常。")
 
+            # x0 预测参数化：先由 x_t 与 x0_hat 反推出当前 epsilon_hat。
             predicted_noise = (
                 state - self.sqrt_gammas[timestep] * predicted_x0
             ) / self.sqrt_one_minus_gammas[timestep]
@@ -251,6 +261,8 @@ class DDPMTeacherSampler(nn.Module):
                 - self.coeff2[timestep] * predicted_noise
             )
 
+            # 每个非末步另采高斯噪声；因此固定初始噪声还不足以固定 DDPM 全轨迹，
+            # 还需固定此 generator。t=0 只取均值，不再注入噪声。
             if timestep > 0:
                 variance = self.betas[timestep]
                 noise = torch.randn(

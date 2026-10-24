@@ -66,6 +66,7 @@ OUTER_EVERY_INNER = 4
 TOP_K = 3
 
 # (阶段名, 教师步数, 学生步数, 轮数)；搜索总轮数必须为 55。
+# “步数”在阶段表中对应网格点数；区间端点由嵌套网格决定，实际t不等于这些数字。
 STAGE_PLAN: Tuple[Tuple[str, int, int, int], ...] = (
     ("S1", 1000, 500, 2),
     ("S2", 500, 250, 2),
@@ -202,6 +203,7 @@ class StudentDistillationTrainer:
         self.current_boundary: Optional[StageBoundary] = None
         self.current_provider: Optional[DistillationTargetProvider] = None
         self.global_batch_index = 0
+        # inner与outer各自用批计数驱动目标随机流；本字段当前未写入checkpoint。
         self.dev_batch_counter = 0
         self._restored_optimizer_states: Dict[str, Any] = {}
         self._csv_handle = None
@@ -367,6 +369,7 @@ class StudentDistillationTrainer:
         depth = batch["depth"].to(self.device)
         histogram = batch["histogram"].to(self.device)
         with torch.no_grad():
+            # 冻结Beta每批算一次物理图J；后续教师各步与学生再按自己的t插值得到J_t。
             _, physical = compute_physical_image(
                 underwater=underwater,
                 depth=depth,
@@ -529,6 +532,7 @@ class StudentDistillationTrainer:
         dataset: SeaDiffDataset, epoch: int, seed: int, batch_size: int
     ) -> DataLoader:
         generator = torch.Generator()
+        # 每轮从seed+epoch重建打乱次序；恢复入口按epoch边界继续，不支持批中途恢复。
         generator.manual_seed(seed + epoch)
         return DataLoader(
             dataset,
@@ -623,6 +627,7 @@ class StudentDistillationTrainer:
 
         self.student.set_gate_override(None)
         self.student.gates.logits.requires_grad_(True)
+        # 预热只更新学生；此处不晋升教师，下一阶段S1仍用原始E3的1000点网格。
         self._emit("warmup_finished", {"epoch": boundary.last_epoch})
         self._save_boundary_checkpoint("warmup", optimizer=optimizer)
 
@@ -635,6 +640,7 @@ class StudentDistillationTrainer:
         if boundary.name == "S1":
             runner = self.e3_runner
         else:
+            # S2起使用上一阶段完成后的学生快照，保持该阶段目标函数不变。
             snapshot = self.snapshots[f"stage_{boundary.teacher_steps}"]
             snapshot.verify_immutable(snapshot.snapshot_sha256)
             runner = snapshot.runner
@@ -647,6 +653,7 @@ class StudentDistillationTrainer:
 
     def run_search(self, start_epoch: int = 6) -> None:
         bilevel_cfg = self.config["training"]["bilevel"]
+        # 搜索入口新建优化器；仅显式恢复断点时载入moment状态，普通预热结束不沿用。
         adapter_optimizer = torch.optim.AdamW(
             list(self.student.adapter_parameters()),
             lr=float(bilevel_cfg["adapter_lr"]),
@@ -700,6 +707,7 @@ class StudentDistillationTrainer:
                     self.inner_dataset, epoch, self.seed, self.batch_size
                 )
                 for batch_index, batch in enumerate(loader):
+                    # batch索引从0开始，所以每轮第1、5、9…批更新门控。
                     update_gates = (
                         batch_index % self.outer_every_inner == 0
                     )
@@ -750,6 +758,7 @@ class StudentDistillationTrainer:
                             outer_histogram,
                             outer_physical,
                         ) = self._compute_targets(
+                            # outer用独立计数，不直接共享inner的global_batch_index。
                             dev_batch, self.dev_batch_counter
                         )
                         self.dev_batch_counter += 1
@@ -785,6 +794,7 @@ class StudentDistillationTrainer:
                         boundary.name,
                         batch_index,
                         {
+                            # total是门控更新后/Adapter更新前；其余分项来自门控更新前。
                             "loss_total": logs[
                                 "inner_loss_total_after_gate"
                             ],
@@ -821,6 +831,8 @@ class StudentDistillationTrainer:
                 )
 
             # 当前学生冻结为下一阶段教师（嵌套网格要求步数匹配）。
+            # 只有S1..S9会晋升；S9产出的stage_2同时供S10和最后40轮微调使用。
+            # S10结束直接硬选择，不创建stage_1教师。
             index = self.epoch_plan.index(boundary)
             if index + 1 < len(self.epoch_plan):
                 next_boundary = self.epoch_plan[index + 1]
@@ -876,6 +888,7 @@ class StudentDistillationTrainer:
         }
         self._emit("epoch60_gates_recorded", distinctness)
         if distinctness["indistinct"]:
+            # 辨识度不足只记警告，仍执行预定Top-3规则；没有按测试指标另选位置。
             self._emit(
                 "gate_indistinctness_warning",
                 {
@@ -901,6 +914,7 @@ class StudentDistillationTrainer:
         )
 
         # 先保存九分支软门控模型，再固定门控保存 Top-3 模型。
+        # 固定值保留实际sigmoid幅度，而非将三个门控改成1；落选分支停止执行。
         self._save_boundary_checkpoint("search_epoch60_full")
         self.student.configure_hard_selection(
             selected, selected_values
@@ -948,6 +962,7 @@ class StudentDistillationTrainer:
         self.current_boundary = boundary
         self.student.train()
 
+        # 继续使用S9结束时的完整九分支2步快照，不把Top-3学生自身作为教师。
         snapshot = self.snapshots["stage_2"]
         snapshot.verify_immutable(snapshot.snapshot_sha256)
         self.current_provider = DistillationTargetProvider(
@@ -987,6 +1002,7 @@ class StudentDistillationTrainer:
             loader = self._make_loader(
                 self.full_dataset, epoch, self.seed, self.batch_size
             )
+            # 合并600图微调仍用GT加噪和教师目标；部署不执行训练循环或读取reference。
             for batch_index, batch in enumerate(loader):
                 targets, underwater, reference, histogram, physical = (
                     self._compute_targets(batch, self.global_batch_index)
@@ -1030,6 +1046,7 @@ class StudentDistillationTrainer:
                 optimizers={"adapter": optimizer},
             )
 
+        # 报告模型固定为预定第100轮，不依据测试分数选best或提前停止。
         self._save_boundary_checkpoint(
             "finetune_epoch100", optimizer=optimizer, final=True
         )
@@ -1103,6 +1120,8 @@ class StudentDistillationTrainer:
             ),
             "seed": self.seed,
             "rng_state": capture_rng_state(),
+            # 这里只保存inner批计数；dev_batch_counter及dev迭代器当前位置未保存。
+            # 因此epoch恢复具备状态校验，但不能据此声称外层随机流逐批完全复现。
             "global_batch_index": self.global_batch_index,
             "final": final,
         }

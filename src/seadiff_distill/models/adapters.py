@@ -45,7 +45,9 @@ class ConvAdapter2d(nn.Module):
             bias=False,
         )
 
+        # 两个 1×1 无偏置投影不改变 H/W；参数量为 2*C*hidden_channels。
         # 初始修正量为零，接入学生时保持原骨干的初始输出。
+        # 首次反传时 up 可先得到梯度；down 与门控的作用随 up 离开零值后显现。
         nn.init.zeros_(self.up.weight)
 
     def forward(self, features: Tensor) -> Tensor:

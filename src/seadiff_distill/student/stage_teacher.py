@@ -101,6 +101,7 @@ class StageTeacherSnapshot:
         }
 
         self.snapshot = snapshot
+        # 这是模型状态内容的身份；与torch.save文件字节的SHA256是两个不同口径。
         self.snapshot_sha256 = _state_sha256(self.snapshot)
 
         self.runner = TeacherChainRunner(
@@ -190,6 +191,7 @@ class StageTeacherSnapshot:
         if next(source_backbone.parameters()).device.type == "cpu":
             cpu_backbone = source_backbone
         else:
+            # .cpu()会原地迁移模块，先复制可避免恢复教师时把正在训练的学生移走。
             cpu_backbone = copy.deepcopy(source_backbone).cpu()
 
         clone = OneStepSeaDiffStudent(
@@ -205,6 +207,7 @@ class StageTeacherSnapshot:
         if not selected:
             raise ValueError(f"快照文件没有有效门控：{source}")
         clone.configure_hard_selection(selected, gate_values)
+        # 快照门控固定、所有参数冻结；时间步仍由链runner传入，可在网格各点调用。
         clone.requires_grad_(False)
         clone.zero_grad(set_to_none=True)
         clone.eval()
@@ -264,6 +267,8 @@ def promote_stage_teacher(
         raise ValueError("阶段快照必须在 Top-K 硬选择之前创建。")
 
     gate_values = source.gates.export_values()
+    # 复制完整学生，避免教师目标随着后续Adapter/门控优化而漂移。
+    # 此处启用全部九位置的固定门控，不是epoch60的Top-3容量裁剪。
     clone = copy.deepcopy(source)
     clone.configure_hard_selection(clone.site_names(), gate_values)
     clone.requires_grad_(False)

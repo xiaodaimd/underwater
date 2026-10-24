@@ -3,6 +3,7 @@ seed: 3407
 output_dir: outputs/teacher_e3
 
 condition:
+  # t 越大 w(t) 越大；反向999→0时，J_t从近J退向U，末端仍保留10%差值。
   mode: dynamic_physical
 
 data:
@@ -28,6 +29,7 @@ inference:
   denoiser: outputs/teacher_e3/weights/model_denoiser_10000.pth
   denoiser_sha256: bfd800528e4666aa7792b44f75fbbfa500e3fecf3ab47d0d591c6fce5c35f9a5
   beta_predictor: outputs/teacher_e3/weights/model_beta_frozen_10000.pth
+  # 这是重新保存后文件的 SHA；文件字节不同不表示其 Beta 张量被更新。
   beta_predictor_sha256: 61c8bc6ba0b65e8b58ed0f0bb99ddd65e6acb9267794ff01c24c121871ca9c33
 
 training:

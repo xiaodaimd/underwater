@@ -131,6 +131,7 @@ class TeacherTrainer:
             perceptual_weight=self.perceptual_weight,
             perceptual=self.perceptual,
         )
+        # 原始 400k 训练同时优化 Beta 与 Denoiser；E3 微调另有独立训练器。
         self.optimizer = torch.optim.AdamW(
             self.network.parameters(),
             lr=self.lr,
@@ -204,12 +205,15 @@ class TeacherTrainer:
         depth = batch["depth"]
         histogram = batch["histogram"]
 
+        # 此处必须保留计算图：损失→Denoiser→J→Beta，才能联合学习物理衰减。
+        # 深度/直方图是输入 U 的条件；reference 不参与 J 的生成。
         predicted_beta, physical, preclamp = compute_physical_image(
             underwater=underwater,
             depth=depth,
             beta_predictor=self.network.beta_predictor,
             return_preclamp=True,
         )
+        # 从清晰参考图 Y 生成随机时间步 x_t，模拟不同噪声水平的训练状态。
         timesteps = torch.randint(
             0, TRAIN_TIMESTEPS, (underwater.shape[0],), device=self.device
         ).long()
@@ -217,6 +221,7 @@ class TeacherTrainer:
         packed = pack_paper_order(
             noisy, underwater, histogram, physical
         )
+        # 骨干预测 x0_hat，直接与 Y 计算图像 MSE 和 VGG19 特征损失。
         prediction = self.network.denoiser(packed, timesteps)
 
         loss, parts = self.loss_module(prediction, reference)
@@ -266,6 +271,7 @@ class TeacherTrainer:
         preclamp: Tensor,
         beta_grad_norm: float,
     ) -> None:
+        # 此诊断适用于应被训练的基础 Beta；E3 冻结 Beta 时零梯度是预期行为。
         if beta_grad_norm == 0.0:
             self.beta_grad_zero_streak += 1
         else:

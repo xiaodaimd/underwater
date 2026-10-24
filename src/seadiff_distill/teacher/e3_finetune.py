@@ -121,6 +121,8 @@ class E3TeacherTrainer:
             "beta",
         )
 
+        # eval 控制模块行为，requires_grad 控制求导；二者共同固定 Beta 分支。
+        # 这轮是 400k 基础权重上的 E3 微调，区别于 trainer.py 的两分支联合训练。
         self.network.beta_predictor.eval()
         for parameter in self.network.beta_predictor.parameters():
             parameter.requires_grad_(False)
@@ -158,6 +160,7 @@ class E3TeacherTrainer:
             perceptual_weight=self.perceptual_weight,
             perceptual=self.perceptual,
         )
+        # 优化器只持有 Denoiser 参数；Beta 即使有独立权重文件也不会被更新。
         denoiser_parameters = list(self.network.denoiser.parameters())
         if not denoiser_parameters:
             raise ValueError("Denoiser 没有参数。")
@@ -257,6 +260,8 @@ class E3TeacherTrainer:
         depth = batch["depth"]
         histogram = batch["histogram"]
 
+        # U/D→J 是冻结条件生成；不把物理分支纳入本轮反向图。
+        # J 不依赖 t；随后才按每个样本的 t 构造 J_t。
         with torch.no_grad():
             predicted_beta, physical, preclamp = compute_physical_image(
                 underwater=underwater,
@@ -265,11 +270,13 @@ class E3TeacherTrainer:
                 return_preclamp=True,
             )
 
+        # 每次更新逐样本均匀抽 t；E3 教师训练并非全部固定在单步部署的 t=999。
         timesteps = torch.randint(
             0, TRAIN_TIMESTEPS, (underwater.shape[0],), device=self.device
         ).long()
         noisy, _ = self.diffusion.noisy_image(timesteps, reference)
 
+        # reference 只进入训练状态 x_t 和监督；条件槽由 U/D/J 与 t 决定。
         histogram_slot, physical_slot = dynamic_physical_slots(
             underwater,
             histogram,
@@ -280,6 +287,7 @@ class E3TeacherTrainer:
         packed = pack_paper_order(
             noisy, underwater, histogram_slot, physical_slot
         )
+        # [B,12,H,W]→[B,3,H,W]，预测干净图 x0，不是扩散噪声 epsilon。
         prediction = self.network.denoiser(packed, timesteps)
 
         loss, parts = self.loss_module(prediction, reference)
@@ -381,6 +389,7 @@ class E3TeacherTrainer:
         return path
 
     def _verify_beta_frozen(self) -> None:
+        # 比较参数/缓冲区的原始内容，避免把不同序列化文件哈希误认为权重变化。
         current = _tensor_bytes(self.network.beta_predictor)
         if current != self.beta_bytes:
             raise RuntimeError("Beta 权重在训练中发生了变化，冻结被破坏。")
@@ -444,6 +453,8 @@ class E3TeacherTrainer:
 
         self.network.load_state_dict(payload["network"], strict=True)
         self.network.to(self.device)
+        # eval 控制模块行为，requires_grad 控制求导；二者共同固定 Beta 分支。
+        # 这轮是 400k 基础权重上的 E3 微调，区别于 trainer.py 的两分支联合训练。
         self.network.beta_predictor.eval()
         for parameter in self.network.beta_predictor.parameters():
             parameter.requires_grad_(False)

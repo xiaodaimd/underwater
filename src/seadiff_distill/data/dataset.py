@@ -116,6 +116,8 @@ def _load_condition_arrays(
     record: SeaDiffRecord, image_size: Sequence[int]
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """读取深度与直方图，并检查 dtype、形状、范围和 FP32 约束。"""
+    # 深度/直方图来自预处理缓存；这里仅校验并读取，不重新估计或缩放条件。
+    # 缓存空间尺寸必须与 resize 后的 RGB 一致，避免物理图中的像素错位。
     depth_array = np.load(record.depth, allow_pickle=False)
     if depth_array.ndim == 3 and depth_array.shape[0] == 1:
         depth_array = depth_array[0]
@@ -142,6 +144,7 @@ def _load_condition_arrays(
         )
     if hist_array.dtype != np.float32:
         raise ValueError(f"直方图不是 FP32：{record.histogram}")
+    # sum=1 针对整份三通道直方图张量，不是每个像素的 RGB 和。
     if abs(float(hist_array.sum()) - 1.0) > 1e-4:
         raise ValueError(f"直方图 sum != 1：{record.histogram}")
     return torch.from_numpy(depth_array)[None], torch.from_numpy(hist_array)
@@ -188,6 +191,8 @@ class SeaDiffDataset(Dataset):
             depth.append(depth_item)
             histogram.append(hist_item)
 
+        # 内存保存 [N,3,H,W] 的 U/Y/H 与 [N,1,H,W] 的 D；取样时移除 N 维，
+        # 训练器再 stack 成 batch 并搬到设备。数据集本身不构造 J 或 x_t。
         self.underwater = torch.stack(underwater)
         self.reference = torch.stack(reference)
         self.depth = torch.stack(depth)
@@ -260,6 +265,7 @@ class InferenceDataset(Dataset):
             "depth": depth,
             "histogram": histogram,
         }
+        # 推理结果的生成只依赖 U/D/H；reference 若存在，供调用方评测使用。
         if record.reference is not None:
             result["reference"] = self.to_tensor(
                 self.resize(_read_rgb(record.reference))

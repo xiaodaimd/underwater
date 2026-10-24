@@ -18,6 +18,8 @@ class TrainingDiffusion(nn.Module):
         if type(timesteps) is not int or timesteps < 2:
             raise ValueError("timesteps 必须是 >=2 的整数。")
         scale = 1000 / timesteps
+        # beta_t 为每个扩散步的噪声方差；alpha_bar_t 为累计信号保留量。
+        # sampling_steps 减少只会跳过推理时间点，不应据此重建训练日程。
         betas = torch.linspace(
             BETA_START * scale, BETA_END * scale, timesteps
         ).float()
@@ -52,10 +54,13 @@ class TrainingDiffusion(nn.Module):
             device=clean.device,
             dtype=clean.dtype,
         )
+        # timesteps 为 [B]；重塑后广播到每幅图的通道和空间维。
         sqrt_alpha = self.sqrt_alpha_bar[timesteps].reshape(
             -1, *((1,) * (clean.ndim - 1))
         )
         sqrt_one_minus = self.sqrt_one_minus_alpha_bar[timesteps].reshape(
             -1, *((1,) * (clean.ndim - 1))
         )
+        # q(x_t|Y)：x_t = sqrt(alpha_bar_t)Y + sqrt(1-alpha_bar_t)epsilon。
+        # clean 是训练参考图 Y；本项目去噪器监督目标仍是 Y（x0），不是 epsilon。
         return sqrt_alpha * clean + sqrt_one_minus * noise, noise

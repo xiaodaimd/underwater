@@ -37,6 +37,7 @@ def main() -> int:
     if args.resume:
         start_epoch = trainer.restore(Path(args.resume))
 
+    # 此入口只完成 epoch1..60；阶段教师快照与 Top-3 选择由 trainer 管理。
     if start_epoch <= trainer.warmup_epochs:
         trainer.run_warmup(start_epoch=start_epoch)
         start_epoch = trainer.warmup_epochs + 1
@@ -48,6 +49,7 @@ def main() -> int:
             "scripts/train_student_finetune.py。"
         )
 
+    # selected_top3.pt 是下一入口的交接点，尚未包含 epoch61..100 微调结果。
     trainer.close_logging()
     selection = json.loads(
         (trainer.output_dir / "selection_details.json").read_text(

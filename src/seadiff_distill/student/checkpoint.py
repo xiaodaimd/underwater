@@ -48,6 +48,8 @@ def load_student_training_checkpoint(
         adapter_reduction=4,
         fixed_timestep=999,
     )
+    # 先恢复完整训练结构，再恢复非state_dict的硬选择标记；否则会误执行九个分支。
+    # 此函数仅重建学生，不负责Beta物理条件、初始噪声或部署输入的打包。
     student.load_state_dict(saved["state_dict"], strict=True)
     extra = saved.get("gates_extra_state")
     if extra is not None:
@@ -66,6 +68,7 @@ def load_student_training_checkpoint(
         student.configure_hard_selection(selected, fixed)
         student.freeze_unselected_adapters()
 
+    # 默认前向时间步为999；单次推理仍需调用方提供[x_t,U,0,J_t]输入。
     student.to(device=device)
     student.eval()
     metadata = {

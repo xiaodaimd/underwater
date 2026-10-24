@@ -29,6 +29,9 @@ class OneStepSeaDiffStudent(nn.Module):
     权重加载由后续加载器负责，本类不会自动获取预训练权重。
     """
 
+    # 当前 E3 的真实槽位内容是 [x_t,U,0,J_t]，H/J 是上述接口槽位名。
+    # 当前 trainer/bilevel_optimizer 对同一次学生预测同时计算 GT 与 KD 损失，
+    # 并未采用上方旧说明中“L_original 分支独立采样 t”的额外前向。
     def __init__(
         self,
         backbone: Denoise_UNet,
@@ -114,6 +117,8 @@ class OneStepSeaDiffStudent(nn.Module):
         # 与硬选择的固定门控相互独立。None 表示关闭覆盖。
         self._gate_override: float | None = None
 
+        # 只冻结骨干参数；后续前向不能整体包在 no_grad 中，
+        # 后部冻结卷积仍需把损失梯度传回前部 Adapter 和门控。
         self.backbone.requires_grad_(False)
         self.backbone.zero_grad(set_to_none=True)
         self.backbone.eval()
@@ -228,6 +233,8 @@ class OneStepSeaDiffStudent(nn.Module):
                 raise ValueError(f"位置 {name} 的门控值不是有限数。")
             values[all_names.index(name)] = value
 
+        # 固定值沿用搜索得到的幅度，不把入选门控自动变成 1。
+        # 是否按 Top-k 选择由调用方决定，本方法只实施给定结构。
         self.fixed_gate_values.copy_(values)
         self._selected_sites = selected
         self._hard_selected = True
@@ -328,6 +335,8 @@ class OneStepSeaDiffStudent(nn.Module):
             # 导出后模块被裁剪，但 selected 列表仍保留时按恒等处理。
             return features
 
+        # Adapter 只生成 delta；此处保留原特征主路并施加一个位置标量，
+        # 同一门控广播到整个 batch、所有通道和所有空间像素。
         delta = self.adapters[site.name](features)
         return features + gate_values[index] * delta
 
@@ -380,6 +389,8 @@ class OneStepSeaDiffStudent(nn.Module):
             if timesteps.min().item() < 0 or timesteps.max().item() >= 1000:
                 raise ValueError("timesteps 越界（0..999）。")
 
+        # packed_input 的 H/J 是槽位名称；E3 调用方实际填入 0 和 J_t。
+        # 网络只消费已拼好的 12 通道，不在内部重新计算动态物理条件。
         backbone = self.backbone
         time_embedding = backbone.time_emb(timesteps)
 
@@ -424,6 +435,7 @@ class OneStepSeaDiffStudent(nn.Module):
         if skips:
             raise RuntimeError("跳跃连接未完整消费，请检查骨干结构。")
 
+        # 直接预测 x0（恢复 RGB），不是 epsilon；评估时的 clamp 由外部完成。
         return backbone.final(backbone.act(features))
 
     # ------------------------------------------------------------------
@@ -458,6 +470,8 @@ class OneStepSeaDiffStudent(nn.Module):
             adapters[name] = state
             gates[name] = gate
 
+        # 轻量部署包只含选中 Adapter、门控和结构信息，不含 E3 骨干/Beta。
+        # 推理端必须另外加载与训练时相同的骨干及物理条件网络。
         return {
             "schema_version": 1,
             "kind": "seadiff_single_step_deployment",
@@ -519,6 +533,7 @@ def load_deployment_student(
     gates = dict(payload["fixed_gates"])
     adapters_state = payload["adapters"]
 
+    # 先按完整候选结构装配并严格载入，再删除落选模块；最终仅执行入选分支。
     student = OneStepSeaDiffStudent(
         backbone,
         adapter_reduction=int(payload["adapter_reduction"]),

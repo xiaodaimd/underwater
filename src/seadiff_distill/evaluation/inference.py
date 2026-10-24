@@ -34,6 +34,8 @@ def derive_initial_noise(
 
     先固定 CPU 生成器再搬到目标设备，避免 CUDA 随机流差异。
     """
+    # 这是教师/学生部署对比的初始噪声规则；渐进训练的 sample_batch 使用另一条
+    # 由 batch_index 派生的随机流，并把噪声与 GT 按 alpha_bar 混合。
     generator = torch.Generator(device="cpu")
     generator.manual_seed(derive_noise_seed(sample_id, global_seed))
     noise = torch.randn(tuple(shape), generator=generator, dtype=dtype)

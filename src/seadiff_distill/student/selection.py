@@ -25,5 +25,7 @@ def select_top_k(
         raise ValueError("门控值包含 NaN。")
 
     indexed = list(enumerate(zip(names, values)))
+    # 只对精确并列按候选顺序破同分；近似相等的门控仍按微小数值差排序。
+    # 排名本身不证明位置优劣，门控辨识度由trainer单独记录。
     indexed.sort(key=lambda item: (-item[1][1], item[0]))
     return tuple(item[1][0] for item in indexed[:k])

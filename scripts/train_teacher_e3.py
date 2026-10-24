@@ -31,6 +31,8 @@ def main() -> int:
     seed = int(config.get("seed", 3407))
     determinism = configure_determinism(seed, strict=True)
 
+    # 从 400k 权重继续 10k 次更新：冻结 Beta，新增的是动态条件方式。
+    # 这里的 10k 不是从随机初始化重新训练一个完整教师。
     trainer = E3TeacherTrainer(config, device)
     save_config_snapshot(config, trainer.output_dir / "config.json")
     summary = trainer.train(

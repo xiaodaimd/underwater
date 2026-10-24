@@ -55,6 +55,8 @@ def get_default_sites(
             f"num_resblocks=1；实际配置为 {actual_config}。"
         )
 
+    # 这些位置在残差块之后、对应尺度重采样之外；Adapter 保持特征形状，
+    # 不新增下采样/上采样，也不直接作用于 RGB 输入或最终输出。
     return (
         # 编码端：各尺度最后一个 DownBlock 的输出。
         AdapterSite("enc1", "down.0", 32, 1, "DownBlock"),

@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Sequence, Tuple
 
 TRAIN_TIMESTEPS = 1000
+# 这里记录网格点数；各级首点都为999，并非把实际t依次设成500、250等。
 GRID_SIZES: Tuple[int, ...] = (1000, 500, 250, 125, 63, 32, 16, 8, 4, 2, 1)
 
 
@@ -26,6 +27,7 @@ def _coarsen(grid: Sequence[int]) -> List[int]:
 
     coarse = source[0::2]
     if len(coarse) > 1 and coarse[-1] != source[-1]:
+        # 替换最后一个抽样点以保留0，而非追加0；这样点数仍为ceil(N/2)。
         coarse[-1] = source[-1]
     if len(coarse) != (len(source) + 1) // 2:
         raise AssertionError("网格减半后的点数不符合 ceil(N/2)。")
@@ -39,6 +41,7 @@ def build_nested_grids() -> Dict[int, List[int]]:
     }
     for parent_size, size in zip(GRID_SIZES[:-1], GRID_SIZES[1:]):
         if size == 1:
+            # G(1)只存起点；[999->0]训练区间由目标provider显式补出。
             grids[size] = [grids[parent_size][0]]
         else:
             grids[size] = _coarsen(grids[parent_size])
@@ -70,6 +73,8 @@ def interval_coverage(
         raise ValueError("学生网格必须完全落在教师网格内。")
 
     records: List[IntervalCoverage] = []
+    # 本函数只枚举相邻网格点；G(1)没有相邻对，终端单跳由provider处理。
+    # teacher_updates计DDIM状态更新，未计终端t=0额外的去噪前向。
     for start, end in zip(student[:-1], student[1:]):
         chain = [
             point for point in teacher if end < point <= start

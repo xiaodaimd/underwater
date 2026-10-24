@@ -45,6 +45,7 @@ def main() -> int:
 
     trainer = StudentDistillationTrainer(config, device)
     save_config_snapshot(config, trainer.output_dir / "config.json")
+    # 除学生参数，还恢复选中位置、固定门控与阶段教师快照引用；不可仅载 Adapter。
     start_epoch = trainer.restore(checkpoint)
     if start_epoch < 61:
         raise RuntimeError("搜索阶段尚未结束，不能开始固定选择微调。")
@@ -62,6 +63,7 @@ def main() -> int:
         )
         return 0
 
+    # 600 对训练图合并微调；教师仍是冻结的 stage_2，门控不再搜索。
     trainer.run_finetune(start_epoch=start_epoch)
     trainer.close_logging()
     print(

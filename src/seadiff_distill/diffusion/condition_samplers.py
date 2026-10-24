@@ -53,11 +53,14 @@ class ConditionAwareDDPMTeacherSampler(DDPMTeacherSampler):
         _validate_packed(packed_input, self.gammas.device)
         self.denoiser.eval()
 
+        # x_t 是每步更新的三通道状态；其余九通道只作为重建当前条件的基础。
         state = packed_input[:, :3]
         conditions = packed_input[:, 3:]
         batch = packed_input.shape[0]
 
         for timestep in range(TRAIN_TIMESTEPS - 1, -1, -1):
+            # 总是以基础 conditions 调用回调，避免把上一步 J_t 再次插值而累积偏差。
+            # E3 回调须用当前 t 返回 [U,0,J_t]，不能全链复用 t=999 的物理槽。
             current_conditions = conditions
             if self.condition_fn is not None:
                 current_conditions = self.condition_fn(
@@ -85,6 +88,7 @@ class ConditionAwareDDPMTeacherSampler(DDPMTeacherSampler):
             ):
                 raise RuntimeError("教师输出形状/设备/精度异常。")
 
+            # 网络返回 x0_hat；由当前 x_t 换算 epsilon_hat，供采样更新使用。
             predicted_noise = (
                 state - self.sqrt_gammas[timestep] * predicted_x0
             ) / self.sqrt_one_minus_gammas[timestep]
@@ -93,6 +97,8 @@ class ConditionAwareDDPMTeacherSampler(DDPMTeacherSampler):
                 - self.coeff2[timestep] * predicted_noise
             )
 
+            # 与原始 DDPM 对齐，方差取 beta_t；不是已注册的 posterior_var。
+            # 最后 t=0 不再注入随机噪声。
             if timestep > 0:
                 variance = self.betas[timestep]
                 noise = torch.randn(
@@ -139,12 +145,15 @@ class ConditionAwareDDIMTeacherSampler(DDIMTeacherSampler):
         _validate_packed(packed_input, self.sqrt_alpha_bar.device)
         self.denoiser.eval()
 
+        # x_t 是每步更新的三通道状态；其余九通道只作为重建当前条件的基础。
         state = packed_input[:, :3]
         conditions = packed_input[:, 3:]
         batch = packed_input.shape[0]
         timesteps = [int(v) for v in self.timesteps_tensor.tolist()]
 
         for index, timestep in enumerate(timesteps):
+            # 总是以基础 conditions 调用回调，避免把上一步 J_t 再次插值而累积偏差。
+            # E3 回调须用当前 t 返回 [U,0,J_t]，不能全链复用 t=999 的物理槽。
             current_conditions = conditions
             if self.condition_fn is not None:
                 current_conditions = self.condition_fn(
@@ -175,12 +184,14 @@ class ConditionAwareDDIMTeacherSampler(DDIMTeacherSampler):
             ):
                 raise RuntimeError("教师输出形状/设备/精度异常。")
 
+            # 最后一次直接返回干净图预测；eta=0 的 DDIM 没有逐步随机噪声。
             if index == len(timesteps) - 1:
                 if not torch.isfinite(predicted_x0).all().item():
                     raise RuntimeError("教师最终输出包含 NaN 或 Inf。")
                 return predicted_x0
 
             next_timestep = timesteps[index + 1]
+            # 网络返回 x0_hat；由当前 x_t 换算 epsilon_hat，供采样更新使用。
             predicted_noise = (
                 state - self.sqrt_alpha_bar[timestep] * predicted_x0
             ) / self.sqrt_one_minus_alpha_bar[timestep]
